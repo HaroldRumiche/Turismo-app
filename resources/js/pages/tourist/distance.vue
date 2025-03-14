@@ -1,173 +1,3 @@
-<script setup lang="ts">
-import AppLayout from '@/layouts/AppLayout.vue';
-import { ref, computed, onMounted, nextTick } from 'vue';
-import axios from 'axios';
-
-interface Tourist {
-  id: number;
-  nombre: string;
-  direccion: string;
-  telefono?: string;
-  coordenadas: { lat: number; lng: number } | null;
-}
-
-interface RouteData {
-  distance: string;
-  duration: string;
-  mode: string;
-  polyline: string;
-}
-
-// --- Configuración ---
-const apiKey = "TU_API_KEY"; // Reemplaza con tu clave real
-const ccBase = { lat: -11.849538799381891, lng: -77.14742280000002 };
-const ccBaseAddress = "Centro Comercial Base"; // Cambia a la dirección real
-
-// --- Estado ---
-const tourists = ref<Tourist[]>([]);
-const selectedTouristId = ref<number | ''>('');
-const selectedTourist = computed(() =>
-  tourists.value.find(t => t.id === selectedTouristId.value) || null
-);
-const selectedTouristCoords = ref<{ lat: number; lng: number } | null>(null);
-const transportMode = ref("walking");
-const routeData = ref<RouteData | null>(null);
-
-// --- Breadcrumbs ---
-const breadcrumbs = [
-  { title: 'Dashboard', href: '/dashboard' },
-  { title: 'Calcular Recorrido', href: '/tourist/distance' }
-];
-
-// --- Funciones ---
-const fetchTourists = async () => {
-  try {
-    const response = await axios.get('/tourists');
-    tourists.value = response.data.data || response.data;
-  } catch (error) {
-    console.error("Error al obtener turistas:", error);
-  }
-};
-
-// Actualizado para usar coordenadas guardadas si existen
-const updateSelectedTouristCoords = async () => {
-  if (!selectedTourist.value) return;
-  
-  // Si el turista ya tiene coordenadas guardadas en el CRUD, usarlas directamente
-  if (selectedTourist.value.coordenadas) {
-    selectedTouristCoords.value = selectedTourist.value.coordenadas;
-    return;
-  }
-  
-  // Si no tiene coordenadas guardadas, intentar geocodificar la dirección
-  try {
-    const res = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
-      params: {
-        address: selectedTourist.value.direccion,
-        key: apiKey,
-        region: 'pe'
-      }
-    });
-    if (res.data.results && res.data.results.length) {
-      const loc = res.data.results[0].geometry.location;
-      selectedTouristCoords.value = { lat: loc.lat, lng: loc.lng };
-    } else {
-      selectedTouristCoords.value = null;
-    }
-  } catch (error) {
-    console.error("Error al geocodificar dirección del turista:", error);
-    selectedTouristCoords.value = null;
-  }
-};
-
-// Actualizar coordenadas cuando cambia el turista seleccionado
-const onTouristChange = async () => {
-  await updateSelectedTouristCoords();
-};
-
-const calculateRoute = async () => {
-  if (!selectedTourist.value) {
-    alert("Selecciona un turista.");
-    return;
-  }
-  
-  // Asegurarse de tener las coordenadas actualizadas
-  await updateSelectedTouristCoords();
-  
-  if (!selectedTouristCoords.value) {
-    alert("No se pudo obtener la ubicación del turista.");
-    return;
-  }
-
-  try {
-    const origin = `${ccBase.lat},${ccBase.lng}`;
-    const destination = `${selectedTouristCoords.value.lat},${selectedTouristCoords.value.lng}`;
-
-    const directionsRes = await axios.get("https://maps.googleapis.com/maps/api/directions/json", {
-      params: {
-        origin: origin,
-        destination: destination,
-        mode: transportMode.value,
-        key: apiKey,
-      }
-    });
-
-    if (directionsRes.data.routes && directionsRes.data.routes.length > 0) {
-      const route = directionsRes.data.routes[0];
-      const leg = route.legs[0];
-
-      routeData.value = {
-        distance: leg.distance.text,
-        duration: leg.duration.text,
-        mode: transportMode.value,
-        polyline: route.overview_polyline.points
-      };
-
-      nextTick(() => {
-        renderRouteOnMap();
-      });
-    } else {
-      alert("No se pudo obtener la ruta.");
-    }
-  } catch (error) {
-    console.error("Error al calcular la ruta:", error);
-  }
-};
-
-const renderRouteOnMap = () => {
-  if (!routeData.value || !selectedTouristCoords.value) return;
-  const mapElement = document.getElementById("routeMap");
-  if (!mapElement) return;
-
-  const map = new google.maps.Map(mapElement, {
-    center: ccBase,
-    zoom: 14
-  });
-
-  const directionsService = new google.maps.DirectionsService();
-  const directionsRenderer = new google.maps.DirectionsRenderer({ map: map });
-
-  directionsService.route(
-    {
-      origin: ccBase,
-      destination: selectedTouristCoords.value,
-      travelMode: transportMode.value.toUpperCase() as google.maps.TravelMode,
-    },
-    (result, status) => {
-      if (status === "OK" && result) {
-        directionsRenderer.setDirections(result);
-      } else {
-        console.error("Error al renderizar la ruta:", status);
-      }
-    }
-  );
-};
-
-onMounted(() => {
-  fetchTourists();
-});
-</script>
-
 <template>
   <AppLayout :breadcrumbs="breadcrumbs">
     <div class="distance-container">
@@ -211,19 +41,13 @@ onMounted(() => {
         <p><strong>Coordenadas Origen:</strong> {{ ccBase.lat }}, {{ ccBase.lng }}</p>
       </div>
 
-      <!-- Selección de modo de transporte -->
-      <div class="mb-4">
-        <label class="block font-semibold mb-1">Modo de Transporte:</label>
-        <select v-model="transportMode" class="w-full p-2 border rounded">
-          <option value="walking">Caminar</option>
-          <option value="driving">Auto</option>
-          <option value="transit">Transporte Público</option>
-        </select>
-      </div>
-
       <!-- Botón para calcular ruta -->
-      <button @click="calculateRoute" class="bg-green-600 text-white px-4 py-2 rounded">
-        Calcular Ruta
+      <button 
+        @click="calculateRoute" 
+        class="bg-green-600 text-white px-4 py-2 rounded"
+        :disabled="!selectedTouristId || isCalculating"
+      >
+        {{ isCalculating ? 'Calculando...' : 'Calcular Ruta' }}
       </button>
 
       <!-- Resultados -->
@@ -231,14 +55,225 @@ onMounted(() => {
         <h2 class="text-xl font-bold mb-2">Resultados del Recorrido</h2>
         <p><strong>Distancia:</strong> {{ routeData.distance }}</p>
         <p><strong>Tiempo Estimado:</strong> {{ routeData.duration }}</p>
-        <p><strong>Modo:</strong> {{ routeData.mode }}</p>
       </div>
-
-      <!-- Mapa con la ruta detallada -->
-      <div id="routeMap" class="mt-6 h-96 rounded-lg border"></div>
     </div>
   </AppLayout>
 </template>
+
+<script setup lang="ts">
+import AppLayout from '@/layouts/AppLayout.vue';
+import { ref, computed, onMounted, watch } from 'vue';
+import axios from 'axios';
+
+// Declara tipos de Google Maps para evitar errores de TypeScript
+declare global {
+  interface Window {
+    google: any;
+  }
+}
+
+interface Tourist {
+  id: number;
+  nombre: string;
+  direccion: string;
+  telefono?: string;
+  // Si se registran, se guardarán; de lo contrario, será null
+  coordenadas: { lat: number; lng: number } | null;
+}
+
+interface RouteData {
+  distance: string;
+  duration: string;
+}
+
+// --- Configuración ---
+const apiKey = "AIzaSyAJzGS5DYAIYPFC7MBTQ40gqC7iOZ2vmGg"; // Tu API Key
+const ccBase = { lat: -11.849538799381891, lng: -77.14742280000002 };
+const ccBaseAddress = "Centro Comercial Base";
+
+// --- Estado ---
+const tourists = ref<Tourist[]>([]);
+const selectedTouristId = ref<number | ''>('');
+const selectedTourist = computed(() =>
+  tourists.value.find(t => t.id === selectedTouristId.value) || null
+);
+
+// Para el destino, se usará la dirección registrada
+const selectedTouristCoords = ref<{ lat: number; lng: number } | null>(null);
+const routeData = ref<RouteData | null>(null);
+const googleMapsLoaded = ref(false);
+const isCalculating = ref(false);
+
+// --- Breadcrumbs ---
+const breadcrumbs = [
+  { title: 'Dashboard', href: '/dashboard' },
+  { title: 'Calcular Recorrido', href: '/tourist/distance' }
+];
+
+// --- Funciones ---
+const fetchTourists = async () => {
+  try {
+    const response = await axios.get('/tourists');
+    tourists.value = response.data.data || response.data;
+  } catch (error) {
+    console.error("Error al obtener turistas:", error);
+    alert("Error al cargar la lista de turistas. Por favor, recarga la página.");
+  }
+};
+
+// Cargar Google Maps API (solo para geocodificación y cálculo de distancia)
+const loadGoogleMapsScript = () => {
+  if (window.google && window.google.maps) {
+    googleMapsLoaded.value = true;
+    return;
+  }
+  
+  const script = document.createElement('script');
+  // Necesitamos la librería de rutas para usar DistanceMatrixService
+  script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,routes&loading=async`;
+  script.async = true;
+  script.defer = true;
+  script.onload = () => {
+    googleMapsLoaded.value = true;
+    console.log("Google Maps API cargada correctamente");
+  };
+  script.onerror = () => {
+    console.error("Error al cargar Google Maps API");
+  };
+  document.head.appendChild(script);
+};
+
+// Actualiza las coordenadas del turista seleccionado
+const updateSelectedTouristCoords = async () => {
+  if (!selectedTourist.value) return;
+  
+  // Si el turista ya tiene coordenadas guardadas, usarlas
+  if (selectedTourist.value.coordenadas) {
+    selectedTouristCoords.value = selectedTourist.value.coordenadas;
+    return;
+  }
+  
+  // Esperamos a que Google Maps se cargue
+  if (!googleMapsLoaded.value) {
+    console.log("Esperando a que Google Maps se cargue...");
+    return;
+  }
+  
+  // Usar el geocoder del cliente JS
+  const geocoder = new window.google.maps.Geocoder();
+  
+  try {
+    geocoder.geocode(
+      { 
+        address: selectedTourist.value.direccion,
+        region: 'pe'
+      },
+      (results: any, status: string) => {
+        if (status === "OK" && results && results.length > 0) {
+          const location = results[0].geometry.location;
+          selectedTouristCoords.value = { 
+            lat: location.lat(), 
+            lng: location.lng() 
+          };
+        } else {
+          console.error("No se pudieron geocodificar coordenadas:", status);
+          selectedTouristCoords.value = null;
+        }
+      }
+    );
+  } catch (error) {
+    console.error("Error al geocodificar:", error);
+    selectedTouristCoords.value = null;
+  }
+};
+
+const onTouristChange = async () => {
+  // Esperamos a que Google Maps se cargue antes de intentar geocodificar
+  if (!googleMapsLoaded.value) {
+    setTimeout(() => {
+      onTouristChange();
+    }, 500);
+    return;
+  }
+  
+  await updateSelectedTouristCoords();
+  // Limpiar resultados anteriores
+  routeData.value = null;
+};
+
+// Calcular ruta utilizando DistanceMatrixService de Google Maps
+const calculateRoute = () => {
+  if (!selectedTourist.value) {
+    alert("Selecciona un turista.");
+    return;
+  }
+  
+  if (!selectedTouristCoords.value) {
+    alert("No se pudo obtener la ubicación del turista.");
+    return;
+  }
+  
+  if (!googleMapsLoaded.value) {
+    alert("Google Maps todavía está cargando. Por favor, espera un momento.");
+    return;
+  }
+  
+  isCalculating.value = true;
+  
+  // Usar DistanceMatrixService para calcular distancia y tiempo
+  const service = new window.google.maps.DistanceMatrixService();
+  
+  service.getDistanceMatrix(
+    {
+      origins: [ccBase],
+      destinations: [selectedTouristCoords.value],
+      travelMode: window.google.maps.TravelMode.WALKING,
+      unitSystem: window.google.maps.UnitSystem.METRIC,
+      avoidHighways: false,
+      avoidTolls: false,
+    },
+    (response: any, status: string) => {
+      isCalculating.value = false;
+      
+      if (status === "OK" && response) {
+        if (
+          response.rows && 
+          response.rows[0] && 
+          response.rows[0].elements && 
+          response.rows[0].elements[0] && 
+          response.rows[0].elements[0].status === "OK"
+        ) {
+          const element = response.rows[0].elements[0];
+          
+          routeData.value = {
+            distance: element.distance.text,
+            duration: element.duration.text
+          };
+        } else {
+          console.error("No hay elementos en la respuesta o error de estado:", response);
+          alert("No se pudo calcular la ruta. Comprueba que la dirección sea válida.");
+        }
+      } else {
+        console.error("Error en DistanceMatrixService:", status);
+        alert("Error al calcular la ruta. Por favor, intenta de nuevo.");
+      }
+    }
+  );
+};
+
+// Observar cuando Google Maps se carga para actualizar los datos
+watch(googleMapsLoaded, (isLoaded) => {
+  if (isLoaded && selectedTourist.value) {
+    updateSelectedTouristCoords();
+  }
+});
+
+// Al montar el componente
+onMounted(() => { 
+  fetchTourists();
+  loadGoogleMapsScript();
+});
+</script>
 
 <style scoped>
 .distance-container {
@@ -254,7 +289,6 @@ onMounted(() => {
   margin-bottom: 0.5rem;
   display: block;
 }
-.distance-container input,
 .distance-container select {
   margin-bottom: 1rem;
   width: 100%;
@@ -269,10 +303,10 @@ onMounted(() => {
   border: none;
   border-radius: 4px;
   cursor: pointer;
-}
-#routeMap {
   width: 100%;
-  height: 400px;
-  margin-top: 1rem;
+}
+.distance-container button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
 }
 </style>
