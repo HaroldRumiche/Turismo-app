@@ -88,7 +88,7 @@ interface RouteData {
 
 // --- Configuración ---
 const apiKey = ""; // Tu API Key
-const ccBase = { lat: -11.849538799381891, lng: -77.14742280000002 };
+const ccBase = { lat: -11.868539296791372, , lng: -77.11727733064555 };
 const ccBaseAddress = "Centro Comercial Base";
 
 // --- Estado ---
