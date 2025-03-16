@@ -91,7 +91,7 @@ interface RouteData {
 
 // --- Configuración ---
 // Usar variable de entorno para la API key
-const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "AIzaSyAJzGS5DYAIYPFC7MBTQ40gqC7iOZ2vmGg";
+const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
 const ccBase = { lat: -11.849538799381891, lng: -77.14742280000002 };
 const ccBaseAddress = "Centro Comercial Base";
 
