@@ -19,6 +19,34 @@
         </select>
       </div>
 
+      <!-- Modo de transporte -->
+      <div class="mb-4">
+        <label class="block font-semibold mb-1">Modo de Transporte:</label>
+        <div class="flex space-x-2">
+          <button 
+            @click="travelMode = 'DRIVING'" 
+            class="px-3 py-1 rounded"
+            :class="travelMode === 'DRIVING' ? 'bg-blue-600 text-white' : 'bg-gray-200'"
+          >
+            🚗 En Auto
+          </button>
+          <button 
+            @click="travelMode = 'WALKING'" 
+            class="px-3 py-1 rounded"
+            :class="travelMode === 'WALKING' ? 'bg-blue-600 text-white' : 'bg-gray-200'"
+          >
+            🚶 Caminando
+          </button>
+          <button 
+            @click="travelMode = 'TRANSIT'" 
+            class="px-3 py-1 rounded"
+            :class="travelMode === 'TRANSIT' ? 'bg-blue-600 text-white' : 'bg-gray-200'"
+          >
+            🚌 Transporte Público
+          </button>
+        </div>
+      </div>
+
       <!-- Mostrar datos del turista seleccionado -->
       <div v-if="selectedTourist" class="mb-4 border p-2 rounded">
         <p><strong>Destino (registrado):</strong> {{ selectedTourist.direccion }}</p>
@@ -47,7 +75,7 @@
         class="bg-green-600 text-white px-4 py-2 rounded mb-4"
         :disabled="!selectedTouristId || isCalculating"
       >
-        {{ isCalculating ? 'Calculando...' : 'Calcular Ruta' }}
+        {{ isCalculating ? 'Calculando...' : 'Calcular Mejor Ruta' }}
       </button>
 
       <!-- Mapa -->
@@ -58,6 +86,12 @@
         <h2 class="text-xl font-bold mb-2">Resultados del Recorrido</h2>
         <p><strong>Distancia:</strong> {{ routeData.distance }}</p>
         <p><strong>Tiempo Estimado:</strong> {{ routeData.duration }}</p>
+        <div v-if="routeData.steps && routeData.steps.length > 0" class="mt-4">
+          <h3 class="font-bold">Indicaciones paso a paso:</h3>
+          <ol class="list-decimal pl-5 mt-2">
+            <li v-for="(step, index) in routeData.steps" :key="index" class="mb-2" v-html="step"></li>
+          </ol>
+        </div>
       </div>
     </div>
   </AppLayout>
@@ -88,6 +122,7 @@ interface Tourist {
 interface RouteData {
   distance: string;
   duration: string;
+  steps?: string[];
 }
 
 // --- Configuración ---
@@ -109,8 +144,9 @@ const routeData = ref<RouteData | null>(null);
 const googleMapsLoaded = ref(false);
 const isCalculating = ref(false);
 const map = ref<any>(null);
-const originMarker = ref<any>(null);
-const destinationMarker = ref<any>(null);
+const directionsService = ref<any>(null);
+const directionsRenderer = ref<any>(null);
+const travelMode = ref('DRIVING'); // Modo de transporte por defecto
 
 // --- Breadcrumbs ---
 const breadcrumbs = [
@@ -129,7 +165,7 @@ const fetchTourists = async () => {
   }
 };
 
-// Inicializar el mapa
+// Inicializar el mapa y los servicios de direcciones
 const initMap = () => {
   if (!googleMapsLoaded.value) return;
   
@@ -141,17 +177,14 @@ const initMap = () => {
       mapTypeId: window.google.maps.MapTypeId.ROADMAP,
     });
     
-    // Crear un marcador para el CC Base
-    originMarker.value = new window.google.maps.Marker({
-      position: ccBase,
+    // Inicializar el servicio de direcciones
+    directionsService.value = new window.google.maps.DirectionsService();
+    directionsRenderer.value = new window.google.maps.DirectionsRenderer({
       map: map.value,
-      title: ccBaseAddress,
-      icon: {
-        url: "http://maps.google.com/mapfiles/ms/icons/blue-dot.png",
-      },
+      suppressMarkers: false, // Mostrar marcadores de origen y destino
     });
     
-    console.log("Mapa inicializado correctamente");
+    console.log("Mapa y servicios de direcciones inicializados correctamente");
   } catch (error) {
     console.error("Error al inicializar el mapa:", error);
   }
@@ -166,7 +199,7 @@ const loadGoogleMapsScript = () => {
   }
   
   const script = document.createElement('script');
-  script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=initGoogleMaps`;
+  script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&callback=initGoogleMaps`;
   script.async = true;
   script.defer = true;
   
@@ -180,7 +213,6 @@ const updateSelectedTouristCoords = async () => {
   // Si el turista ya tiene coordenadas guardadas, usarlas
   if (selectedTourist.value.coordenadas) {
     selectedTouristCoords.value = selectedTourist.value.coordenadas;
-    updateMapWithDestination();
     return;
   }
   
@@ -206,9 +238,6 @@ const updateSelectedTouristCoords = async () => {
             lat: location.lat(), 
             lng: location.lng() 
           };
-          
-          // Actualizar el mapa con el destino
-          updateMapWithDestination();
         } else {
           console.error("No se pudieron geocodificar coordenadas:", status);
           selectedTouristCoords.value = null;
@@ -219,32 +248,6 @@ const updateSelectedTouristCoords = async () => {
     console.error("Error al geocodificar:", error);
     selectedTouristCoords.value = null;
   }
-};
-
-// Añadir marcador del destino y centrar el mapa
-const updateMapWithDestination = () => {
-  if (!map.value || !selectedTouristCoords.value) return;
-  
-  // Eliminar marcador anterior si existe
-  if (destinationMarker.value) {
-    destinationMarker.value.setMap(null);
-  }
-  
-  // Crear un nuevo marcador para el destino
-  destinationMarker.value = new window.google.maps.Marker({
-    position: selectedTouristCoords.value,
-    map: map.value,
-    title: selectedTourist.value?.nombre || "Destino",
-    icon: {
-      url: "http://maps.google.com/mapfiles/ms/icons/red-dot.png",
-    },
-  });
-  
-  // Ajustar el mapa para mostrar origen y destino
-  const bounds = new window.google.maps.LatLngBounds();
-  bounds.extend(ccBase);
-  bounds.extend(selectedTouristCoords.value);
-  map.value.fitBounds(bounds);
 };
 
 const onTouristChange = async () => {
@@ -259,24 +262,123 @@ const onTouristChange = async () => {
   await updateSelectedTouristCoords();
   // Limpiar resultados anteriores
   routeData.value = null;
+  
+  // Limpiamos la ruta dibujada si hay una
+  if (directionsRenderer.value) {
+    directionsRenderer.value.setDirections({routes: []});
+  }
 };
 
-// Dibujar línea entre puntos (alternativa a DirectionsService)
-const drawLine = () => {
-  if (!map.value || !selectedTouristCoords.value) return;
+// Calcular la mejor ruta usando el servicio de direcciones de Google Maps
+const calculateRoute = () => {
+  if (!selectedTourist.value) {
+    alert("Selecciona un turista.");
+    return;
+  }
   
-  // Crear una línea directa entre origen y destino
-  const path = new window.google.maps.Polyline({
-    path: [ccBase, selectedTouristCoords.value],
-    geodesic: true,
-    strokeColor: "#FF0000",
-    strokeOpacity: 1.0,
-    strokeWeight: 2,
-    map: map.value,
+  if (!selectedTouristCoords.value) {
+    alert("No se pudo obtener la ubicación del turista.");
+    return;
+  }
+  
+  if (!googleMapsLoaded.value || !directionsService.value) {
+    alert("Google Maps todavía está cargando. Por favor, espera un momento.");
+    return;
+  }
+  
+  isCalculating.value = true;
+  
+  // Preparar los parámetros para la petición de ruta
+  const request = {
+    origin: ccBase,
+    destination: selectedTouristCoords.value,
+    travelMode: window.google.maps.TravelMode[travelMode.value],
+    provideRouteAlternatives: true,
+    optimizeWaypoints: true,
+  };
+  
+  // Realizar la petición al servicio de direcciones
+  directionsService.value.route(request, (result: any, status: string) => {
+    isCalculating.value = false;
+    
+    if (status === "OK") {
+      // Mostrar la ruta en el mapa
+      directionsRenderer.value.setDirections(result);
+      
+      // Extraer los datos de la ruta (distancia y duración)
+      const route = result.routes[0];
+      const leg = route.legs[0];
+      
+      // Extraer las instrucciones paso a paso
+      const steps = leg.steps.map((step: any) => {
+        return step.instructions;
+      });
+      
+      // Actualizar los resultados
+      routeData.value = {
+        distance: leg.distance.text,
+        duration: leg.duration.text,
+        steps: steps
+      };
+      
+      // Ajustar el zoom para mostrar toda la ruta
+      const bounds = new window.google.maps.LatLngBounds();
+      bounds.extend(ccBase);
+      bounds.extend(selectedTouristCoords.value);
+      map.value.fitBounds(bounds);
+    } else {
+      console.error("Error al calcular ruta:", status);
+      alert(`No se pudo calcular la ruta: ${status}`);
+      
+      // Si falla el cálculo de ruta, volver al método Haversine como respaldo
+      calculateHaversineBackup();
+    }
   });
 };
 
-// Calcular distancia directa entre dos puntos en metros
+// Método de respaldo: calcular distancia directa
+const calculateHaversineBackup = () => {
+  if (!selectedTouristCoords.value) return;
+  
+  try {
+    // Calcular distancia usando la fórmula de Haversine
+    const distance = calculateHaversineDistance(
+      ccBase.lat, 
+      ccBase.lng, 
+      selectedTouristCoords.value.lat, 
+      selectedTouristCoords.value.lng
+    );
+    
+    // Estimar tiempo en base a la distancia
+    const time = estimateWalkingTime(distance);
+    
+    // Actualizar los resultados
+    routeData.value = {
+      distance: formatDistance(distance),
+      duration: time + " (estimación lineal)",
+    };
+    
+    // Mostrar una línea directa en el mapa como alternativa
+    const path = new window.google.maps.Polyline({
+      path: [ccBase, selectedTouristCoords.value],
+      geodesic: true,
+      strokeColor: "#FF0000",
+      strokeOpacity: 1.0,
+      strokeWeight: 2,
+      map: map.value,
+    });
+    
+    // Ajustar el zoom
+    const bounds = new window.google.maps.LatLngBounds();
+    bounds.extend(ccBase);
+    bounds.extend(selectedTouristCoords.value);
+    map.value.fitBounds(bounds);
+  } catch (error) {
+    console.error("Error en cálculo de respaldo:", error);
+  }
+};
+
+// Calcular distancia directa entre dos puntos en metros (fórmula Haversine)
 const calculateHaversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
   const R = 6371000; // Radio de la Tierra en metros
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -317,58 +419,18 @@ const formatDistance = (meters: number) => {
   }
 };
 
-// Calcular ruta utilizando método alternativo ya que hay problemas con DirectionsService
-const calculateRoute = () => {
-  if (!selectedTourist.value) {
-    alert("Selecciona un turista.");
-    return;
-  }
-  
-  if (!selectedTouristCoords.value) {
-    alert("No se pudo obtener la ubicación del turista.");
-    return;
-  }
-  
-  if (!googleMapsLoaded.value) {
-    alert("Google Maps todavía está cargando. Por favor, espera un momento.");
-    return;
-  }
-  
-  isCalculating.value = true;
-  
-  try {
-    // Dibujar línea directa entre puntos
-    drawLine();
-    
-    // Calcular distancia usando la fórmula de Haversine
-    const distanceInMeters = calculateHaversineDistance(
-      ccBase.lat, 
-      ccBase.lng, 
-      selectedTouristCoords.value.lat, 
-      selectedTouristCoords.value.lng
-    );
-    
-    // Estimar tiempo de caminata
-    const walkingTime = estimateWalkingTime(distanceInMeters);
-    
-    // Actualizar resultados
-    routeData.value = {
-      distance: formatDistance(distanceInMeters),
-      duration: walkingTime
-    };
-    
-    isCalculating.value = false;
-  } catch (error) {
-    console.error("Error al calcular ruta:", error);
-    isCalculating.value = false;
-    alert("Error al calcular la ruta. Por favor, intenta de nuevo.");
-  }
-};
-
 // Observar cuando Google Maps se carga para actualizar los datos
 watch(googleMapsLoaded, (isLoaded) => {
   if (isLoaded && selectedTourist.value) {
     updateSelectedTouristCoords();
+  }
+});
+
+// Observar cambios en el modo de transporte
+watch(travelMode, () => {
+  // Si hay un turista seleccionado y hay una ruta calculada previamente, recalcular
+  if (selectedTourist.value && routeData.value) {
+    calculateRoute();
   }
 });
 
@@ -386,3 +448,17 @@ onMounted(() => {
   loadGoogleMapsScript();
 });
 </script>
+
+<style scoped>
+.distance-container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+#map {
+  min-height: 400px;
+  border-radius: 0.375rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+</style>
