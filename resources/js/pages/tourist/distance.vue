@@ -72,6 +72,7 @@ import axios from 'axios';
 declare global {
   interface Window {
     google: any;
+    initGoogleMaps: () => void;
   }
 }
 
@@ -90,8 +91,8 @@ interface RouteData {
 }
 
 // --- Configuración ---
-// Usar variable de entorno para la API key
-const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "AIzaSyAJzGS5DYAIYPFC7MBTQ40gqC7iOZ2vmGg";
+// La clave API se importa desde el archivo .env
+const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 const ccBase = { lat: -11.849538799381891, lng: -77.14742280000002 };
 const ccBaseAddress = "Centro Comercial Base";
 
@@ -108,12 +109,11 @@ const routeData = ref<RouteData | null>(null);
 const googleMapsLoaded = ref(false);
 const isCalculating = ref(false);
 const map = ref<any>(null);
-const directionsRenderer = ref<any>(null);
-const directionsService = ref<any>(null);
+const originMarker = ref<any>(null);
+const destinationMarker = ref<any>(null);
 
 // --- Breadcrumbs ---
 const breadcrumbs = [
-  { title: 'Dashboard', href: '/dashboard' },
   { title: 'Calcular Recorrido', href: '/tourist/distance' }
 ];
 
@@ -141,20 +141,13 @@ const initMap = () => {
     });
     
     // Crear un marcador para el CC Base
-    new window.google.maps.Marker({
+    originMarker.value = new window.google.maps.Marker({
       position: ccBase,
       map: map.value,
       title: ccBaseAddress,
       icon: {
         url: "http://maps.google.com/mapfiles/ms/icons/blue-dot.png",
       },
-    });
-    
-    // Inicializar el servicio de direcciones
-    directionsService.value = new window.google.maps.DirectionsService();
-    directionsRenderer.value = new window.google.maps.DirectionsRenderer({
-      map: map.value,
-      suppressMarkers: false,
     });
     
     console.log("Mapa inicializado correctamente");
@@ -172,22 +165,9 @@ const loadGoogleMapsScript = () => {
   }
   
   const script = document.createElement('script');
-  // Incluir todas las bibliotecas necesarias
-  script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&callback=initGoogleMaps`;
+  script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=initGoogleMaps`;
   script.async = true;
   script.defer = true;
-  
-  // Definir función de callback global
-  window.initGoogleMaps = () => {
-    googleMapsLoaded.value = true;
-    console.log("Google Maps API cargada correctamente");
-    initMap();
-    
-    // Si ya hay un turista seleccionado, actualizar sus coordenadas
-    if (selectedTouristId.value) {
-      updateSelectedTouristCoords();
-    }
-  };
   
   document.head.appendChild(script);
 };
@@ -244,14 +224,20 @@ const updateSelectedTouristCoords = async () => {
 const updateMapWithDestination = () => {
   if (!map.value || !selectedTouristCoords.value) return;
   
-  // Limpiar direcciones anteriores
-  if (directionsRenderer.value) {
-    directionsRenderer.value.setMap(null);
-    directionsRenderer.value = new window.google.maps.DirectionsRenderer({
-      map: map.value,
-      suppressMarkers: false,
-    });
+  // Eliminar marcador anterior si existe
+  if (destinationMarker.value) {
+    destinationMarker.value.setMap(null);
   }
+  
+  // Crear un nuevo marcador para el destino
+  destinationMarker.value = new window.google.maps.Marker({
+    position: selectedTouristCoords.value,
+    map: map.value,
+    title: selectedTourist.value?.nombre || "Destino",
+    icon: {
+      url: "http://maps.google.com/mapfiles/ms/icons/red-dot.png",
+    },
+  });
   
   // Ajustar el mapa para mostrar origen y destino
   const bounds = new window.google.maps.LatLngBounds();
@@ -274,28 +260,63 @@ const onTouristChange = async () => {
   routeData.value = null;
 };
 
-// Dibujar la ruta en el mapa
-const drawRoute = () => {
-  if (!directionsService.value || !directionsRenderer.value || !selectedTouristCoords.value) return;
+// Dibujar línea entre puntos (alternativa a DirectionsService)
+const drawLine = () => {
+  if (!map.value || !selectedTouristCoords.value) return;
   
-  directionsService.value.route(
-    {
-      origin: ccBase,
-      destination: selectedTouristCoords.value,
-      travelMode: window.google.maps.TravelMode.WALKING,
-    },
-    (response: any, status: string) => {
-      if (status === "OK") {
-        directionsRenderer.value.setDirections(response);
-      } else {
-        console.error("Error al dibujar ruta:", status);
-        alert("No se pudo dibujar la ruta en el mapa.");
-      }
-    }
-  );
+  // Crear una línea directa entre origen y destino
+  const path = new window.google.maps.Polyline({
+    path: [ccBase, selectedTouristCoords.value],
+    geodesic: true,
+    strokeColor: "#FF0000",
+    strokeOpacity: 1.0,
+    strokeWeight: 2,
+    map: map.value,
+  });
 };
 
-// Calcular ruta utilizando DistanceMatrixService de Google Maps
+// Calcular distancia directa entre dos puntos en metros
+const calculateHaversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+  const R = 6371000; // Radio de la Tierra en metros
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const distance = R * c;
+  return distance;
+};
+
+// Estimar tiempo de caminata basado en la distancia
+const estimateWalkingTime = (distanceInMeters: number) => {
+  // Suponemos una velocidad media de caminata de 5 km/h = 1.4 m/s
+  const walkingSpeedMps = 1.4;
+  const timeInSeconds = distanceInMeters / walkingSpeedMps;
+  
+  // Convertir segundos a formato legible
+  if (timeInSeconds < 60) {
+    return Math.round(timeInSeconds) + " segundos";
+  } else if (timeInSeconds < 3600) {
+    return Math.round(timeInSeconds / 60) + " minutos";
+  } else {
+    const hours = Math.floor(timeInSeconds / 3600);
+    const minutes = Math.round((timeInSeconds % 3600) / 60);
+    return hours + " horas " + minutes + " minutos";
+  }
+};
+
+// Formato para la distancia
+const formatDistance = (meters: number) => {
+  if (meters < 1000) {
+    return Math.round(meters) + " m";
+  } else {
+    return (meters / 1000).toFixed(2) + " km";
+  }
+};
+
+// Calcular ruta utilizando método alternativo ya que hay problemas con DirectionsService
 const calculateRoute = () => {
   if (!selectedTourist.value) {
     alert("Selecciona un turista.");
@@ -314,48 +335,33 @@ const calculateRoute = () => {
   
   isCalculating.value = true;
   
-  // Dibujar la ruta en el mapa
-  drawRoute();
-  
-  // Usar DistanceMatrixService para calcular distancia y tiempo
-  const service = new window.google.maps.DistanceMatrixService();
-  
-  service.getDistanceMatrix(
-    {
-      origins: [ccBase],
-      destinations: [selectedTouristCoords.value],
-      travelMode: window.google.maps.TravelMode.WALKING,
-      unitSystem: window.google.maps.UnitSystem.METRIC,
-      avoidHighways: false,
-      avoidTolls: false,
-    },
-    (response: any, status: string) => {
-      isCalculating.value = false;
-      
-      if (status === "OK" && response) {
-        if (
-          response.rows && 
-          response.rows[0] && 
-          response.rows[0].elements && 
-          response.rows[0].elements[0] && 
-          response.rows[0].elements[0].status === "OK"
-        ) {
-          const element = response.rows[0].elements[0];
-          
-          routeData.value = {
-            distance: element.distance.text,
-            duration: element.duration.text
-          };
-        } else {
-          console.error("No hay elementos en la respuesta o error de estado:", response);
-          alert("No se pudo calcular la ruta. Comprueba que la dirección sea válida.");
-        }
-      } else {
-        console.error("Error en DistanceMatrixService:", status);
-        alert("Error al calcular la ruta. Por favor, intenta de nuevo.");
-      }
-    }
-  );
+  try {
+    // Dibujar línea directa entre puntos
+    drawLine();
+    
+    // Calcular distancia usando la fórmula de Haversine
+    const distanceInMeters = calculateHaversineDistance(
+      ccBase.lat, 
+      ccBase.lng, 
+      selectedTouristCoords.value.lat, 
+      selectedTouristCoords.value.lng
+    );
+    
+    // Estimar tiempo de caminata
+    const walkingTime = estimateWalkingTime(distanceInMeters);
+    
+    // Actualizar resultados
+    routeData.value = {
+      distance: formatDistance(distanceInMeters),
+      duration: walkingTime
+    };
+    
+    isCalculating.value = false;
+  } catch (error) {
+    console.error("Error al calcular ruta:", error);
+    isCalculating.value = false;
+    alert("Error al calcular la ruta. Por favor, intenta de nuevo.");
+  }
 };
 
 // Observar cuando Google Maps se carga para actualizar los datos
@@ -369,49 +375,13 @@ watch(googleMapsLoaded, (isLoaded) => {
 onMounted(() => { 
   fetchTourists();
   
-  // Definir callback global para Google Maps
+  // Definir callback global para Google
   window.initGoogleMaps = () => {
     googleMapsLoaded.value = true;
     initMap();
   };
-  
+
+  // Cargar el script de Google Maps
   loadGoogleMapsScript();
 });
 </script>
-
-
-<style scoped>
-.distance-container {
-  max-width: 600px;
-  margin: 0 auto;
-  padding: 1rem;
-}
-.distance-container h1 {
-  text-align: center;
-  margin-bottom: 1rem;
-}
-.distance-container label {
-  margin-bottom: 0.5rem;
-  display: block;
-}
-.distance-container select {
-  margin-bottom: 1rem;
-  width: 100%;
-  padding: 0.5rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-.distance-container button {
-  display: inline-block;
-  margin-top: 0.5rem;
-  padding: 0.5rem 1rem;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  width: 100%;
-}
-.distance-container button:disabled {
-  background-color: #ccc;
-  cursor: not-allowed;
-}
-</style>
