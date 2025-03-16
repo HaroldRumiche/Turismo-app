@@ -91,9 +91,9 @@ interface RouteData {
 }
 
 // --- Configuración ---
-// Usar variable de entorno para la API key
-const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
-const ccBase = { lat: -12.044292193931662,  lng: -77.02962241854219 };
+// La clave API se importa desde el archivo .env
+const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+const ccBase = { lat: -12.044397120486341, lng: -77.02966533388735 };
 const ccBaseAddress = "Palacio de Gobierno, Lima, Perú";
 
 // --- Estado ---
@@ -114,6 +114,7 @@ const destinationMarker = ref<any>(null);
 
 // --- Breadcrumbs ---
 const breadcrumbs = [
+  { title: 'Dashboard', href: '/dashboard' },
   { title: 'Calcular Recorrido', href: '/tourist/distance' }
 ];
 
@@ -385,40 +386,3 @@ onMounted(() => {
   loadGoogleMapsScript();
 });
 </script>
-
-
-<style scoped>
-.distance-container {
-  max-width: 600px;
-  margin: 0 auto;
-  padding: 1rem;
-}
-.distance-container h1 {
-  text-align: center;
-  margin-bottom: 1rem;
-}
-.distance-container label {
-  margin-bottom: 0.5rem;
-  display: block;
-}
-.distance-container select {
-  margin-bottom: 1rem;
-  width: 100%;
-  padding: 0.5rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-.distance-container button {
-  display: inline-block;
-  margin-top: 0.5rem;
-  padding: 0.5rem 1rem;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  width: 100%;
-}
-.distance-container button:disabled {
-  background-color: #ccc;
-  cursor: not-allowed;
-}
-</style>
