@@ -44,11 +44,14 @@
       <!-- Botón para calcular ruta -->
       <button 
         @click="calculateRoute" 
-        class="bg-green-600 text-white px-4 py-2 rounded"
+        class="bg-green-600 text-white px-4 py-2 rounded mb-4"
         :disabled="!selectedTouristId || isCalculating"
       >
         {{ isCalculating ? 'Calculando...' : 'Calcular Ruta' }}
       </button>
+
+      <!-- Mapa -->
+      <div id="map" class="w-full h-64 mb-4 border rounded"></div>
 
       <!-- Resultados -->
       <div v-if="routeData" class="mt-6 p-4 border rounded bg-gray-50">
@@ -87,7 +90,8 @@ interface RouteData {
 }
 
 // --- Configuración ---
-const apiKey = ""; // Tu API Key
+// Usar variable de entorno para la API key
+const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "AIzaSyAJzGS5DYAIYPFC7MBTQ40gqC7iOZ2vmGg";
 const ccBase = { lat: -11.849538799381891, lng: -77.14742280000002 };
 const ccBaseAddress = "Centro Comercial Base";
 
@@ -103,6 +107,9 @@ const selectedTouristCoords = ref<{ lat: number; lng: number } | null>(null);
 const routeData = ref<RouteData | null>(null);
 const googleMapsLoaded = ref(false);
 const isCalculating = ref(false);
+const map = ref<any>(null);
+const directionsRenderer = ref<any>(null);
+const directionsService = ref<any>(null);
 
 // --- Breadcrumbs ---
 const breadcrumbs = [
@@ -121,25 +128,67 @@ const fetchTourists = async () => {
   }
 };
 
-// Cargar Google Maps API (solo para geocodificación y cálculo de distancia)
+// Inicializar el mapa
+const initMap = () => {
+  if (!googleMapsLoaded.value) return;
+  
+  try {
+    // Crear el mapa centrado en el CC Base (punto de origen)
+    map.value = new window.google.maps.Map(document.getElementById("map"), {
+      center: ccBase,
+      zoom: 14,
+      mapTypeId: window.google.maps.MapTypeId.ROADMAP,
+    });
+    
+    // Crear un marcador para el CC Base
+    new window.google.maps.Marker({
+      position: ccBase,
+      map: map.value,
+      title: ccBaseAddress,
+      icon: {
+        url: "http://maps.google.com/mapfiles/ms/icons/blue-dot.png",
+      },
+    });
+    
+    // Inicializar el servicio de direcciones
+    directionsService.value = new window.google.maps.DirectionsService();
+    directionsRenderer.value = new window.google.maps.DirectionsRenderer({
+      map: map.value,
+      suppressMarkers: false,
+    });
+    
+    console.log("Mapa inicializado correctamente");
+  } catch (error) {
+    console.error("Error al inicializar el mapa:", error);
+  }
+};
+
+// Cargar Google Maps API (con todas las bibliotecas necesarias)
 const loadGoogleMapsScript = () => {
   if (window.google && window.google.maps) {
     googleMapsLoaded.value = true;
+    initMap();
     return;
   }
   
   const script = document.createElement('script');
-  // Necesitamos la librería de rutas para usar DistanceMatrixService
-  script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,routes&loading=async`;
+  // Incluir todas las bibliotecas necesarias
+  script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&callback=initGoogleMaps`;
   script.async = true;
   script.defer = true;
-  script.onload = () => {
+  
+  // Definir función de callback global
+  window.initGoogleMaps = () => {
     googleMapsLoaded.value = true;
     console.log("Google Maps API cargada correctamente");
+    initMap();
+    
+    // Si ya hay un turista seleccionado, actualizar sus coordenadas
+    if (selectedTouristId.value) {
+      updateSelectedTouristCoords();
+    }
   };
-  script.onerror = () => {
-    console.error("Error al cargar Google Maps API");
-  };
+  
   document.head.appendChild(script);
 };
 
@@ -150,6 +199,7 @@ const updateSelectedTouristCoords = async () => {
   // Si el turista ya tiene coordenadas guardadas, usarlas
   if (selectedTourist.value.coordenadas) {
     selectedTouristCoords.value = selectedTourist.value.coordenadas;
+    updateMapWithDestination();
     return;
   }
   
@@ -175,6 +225,9 @@ const updateSelectedTouristCoords = async () => {
             lat: location.lat(), 
             lng: location.lng() 
           };
+          
+          // Actualizar el mapa con el destino
+          updateMapWithDestination();
         } else {
           console.error("No se pudieron geocodificar coordenadas:", status);
           selectedTouristCoords.value = null;
@@ -185,6 +238,26 @@ const updateSelectedTouristCoords = async () => {
     console.error("Error al geocodificar:", error);
     selectedTouristCoords.value = null;
   }
+};
+
+// Añadir marcador del destino y centrar el mapa
+const updateMapWithDestination = () => {
+  if (!map.value || !selectedTouristCoords.value) return;
+  
+  // Limpiar direcciones anteriores
+  if (directionsRenderer.value) {
+    directionsRenderer.value.setMap(null);
+    directionsRenderer.value = new window.google.maps.DirectionsRenderer({
+      map: map.value,
+      suppressMarkers: false,
+    });
+  }
+  
+  // Ajustar el mapa para mostrar origen y destino
+  const bounds = new window.google.maps.LatLngBounds();
+  bounds.extend(ccBase);
+  bounds.extend(selectedTouristCoords.value);
+  map.value.fitBounds(bounds);
 };
 
 const onTouristChange = async () => {
@@ -199,6 +272,27 @@ const onTouristChange = async () => {
   await updateSelectedTouristCoords();
   // Limpiar resultados anteriores
   routeData.value = null;
+};
+
+// Dibujar la ruta en el mapa
+const drawRoute = () => {
+  if (!directionsService.value || !directionsRenderer.value || !selectedTouristCoords.value) return;
+  
+  directionsService.value.route(
+    {
+      origin: ccBase,
+      destination: selectedTouristCoords.value,
+      travelMode: window.google.maps.TravelMode.WALKING,
+    },
+    (response: any, status: string) => {
+      if (status === "OK") {
+        directionsRenderer.value.setDirections(response);
+      } else {
+        console.error("Error al dibujar ruta:", status);
+        alert("No se pudo dibujar la ruta en el mapa.");
+      }
+    }
+  );
 };
 
 // Calcular ruta utilizando DistanceMatrixService de Google Maps
@@ -219,6 +313,9 @@ const calculateRoute = () => {
   }
   
   isCalculating.value = true;
+  
+  // Dibujar la ruta en el mapa
+  drawRoute();
   
   // Usar DistanceMatrixService para calcular distancia y tiempo
   const service = new window.google.maps.DistanceMatrixService();
@@ -271,9 +368,17 @@ watch(googleMapsLoaded, (isLoaded) => {
 // Al montar el componente
 onMounted(() => { 
   fetchTourists();
+  
+  // Definir callback global para Google Maps
+  window.initGoogleMaps = () => {
+    googleMapsLoaded.value = true;
+    initMap();
+  };
+  
   loadGoogleMapsScript();
 });
 </script>
+
 
 <style scoped>
 .distance-container {
